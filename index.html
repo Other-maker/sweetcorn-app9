@@ -893,6 +893,66 @@
     <div id="printArea" class="hidden"></div>
 
     <script>
+// ========================================
+// GOOGLE SHEETS SYNC FUNCTION
+// ========================================
+async function syncOrderToSheets(order) {
+    console.log('🎯 ========== SYNC ORDER ATTEMPT ==========');
+    console.log('📦 Order Number:', order.orderNumber);
+    console.log('📦 Order Status:', order.status);
+    console.log('📦 Order Items:', order.items);
+
+    if (!CONFIG.googleAppsScriptURL) {
+        console.error('❌ SYNC FAILED: No Google Sheets URL configured');
+        showMessage('⚠️ No Google Sheets URL set in Settings', 'warning');
+        return;
+    }
+
+    console.log('🌐 Google Sheets URL:', CONFIG.googleAppsScriptURL);
+
+    const payload = {
+        action: 'saveOrder',
+        order: {
+            orderNumber: order.orderNumber,
+            date: order.date,
+            time: order.time || new Date().toLocaleTimeString('en-IN'),
+            customerName: order.customerName || 'Walk-in',
+            items: order.items,
+            subtotal: order.subtotal || order.total,
+            tax: order.tax || 0,
+            total: order.total,
+            paymentMethod: order.paymentMethod,
+            status: order.status,
+            specialNotes: order.specialNotes || ''
+        }
+    };
+
+    console.log('📤 SENDING PAYLOAD:');
+    console.log(JSON.stringify(payload, null, 2));
+
+    try {
+        const response = await fetch(CONFIG.googleAppsScriptURL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        console.log('✅ REQUEST SENT (no-cors mode - response not readable)');
+        console.log('✅ Order synced:', order.orderNumber);
+        console.log('🎯 ========== SYNC COMPLETE ==========');
+        showMessage('✓ Synced to Google Sheets', 'success');
+
+    } catch (error) {
+        console.error('❌ SYNC ERROR:', error);
+        console.error('❌ Error details:', error.message);
+        showMessage('⚠️ Sync failed: ' + error.message, 'warning');
+    }
+}
+
+
         document.addEventListener('DOMContentLoaded', function() {
             const today = new Date().toISOString().split('T')[0];
             const expenseDateInput = document.getElementById('expenseDate');
@@ -1810,6 +1870,11 @@ function markFulfilledInline(orderNumber) {
         localStorage.setItem('cobCornOrders', JSON.stringify(orders));
         loadPendingOrdersInline();
         updateTodayCash();
+
+        // ✅ SYNC TO GOOGLE SHEETS
+        console.log('🚀 Calling syncOrderToSheets for:', order.orderNumber);
+        syncOrderToSheets(order);
+
         showMessage('✓ Order fulfilled - Inventory updated', 'success');
 
         // Sync to Google Sheets (fulfilled orders only)
