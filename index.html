@@ -1661,6 +1661,11 @@ function deductInventory(order) {
         if (menuItem.inventoryId === 'sweet-corn' && inventory['cups']) {
             inventory['cups'].consumedToday += orderItem.quantity; // 1 cup per sweet corn item
         }
+
+        // AUTO-DEDUCT PLATES for Nachos items
+        if ((menuItem.name === 'Cheese Nachos' || menuItem.name === 'Nachos Corn Chaat') && inventory['plates']) {
+            inventory['plates'].consumedToday += orderItem.quantity; // 1 plate per nachos item
+        }
     });
 
     localStorage.setItem('cobCornInventory', JSON.stringify(inventory));
@@ -2030,6 +2035,19 @@ function finalizeEOD() {
 
     showMessage('✓ EOD Finalized & Saved', 'success');
 
+    // SYNC EOD TO GOOGLE SHEETS
+    if (CONFIG.googleAppsScriptURL) {
+        fetch(CONFIG.googleAppsScriptURL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'saveEOD',
+                eodData: eodData
+            })
+        }).then(() => console.log('✅ EOD synced')).catch(err => console.error('❌ EOD sync error:', err));
+    }
+
     if (syncStatus.isConnected) syncAllDataToGoogle();
 }
 
@@ -2191,6 +2209,19 @@ function saveExpense() {
 
     loadRecentExpenses();
     showMessage('✓ Expense saved', 'success');
+
+    // SYNC EXPENSE TO GOOGLE SHEETS
+    if (CONFIG.googleAppsScriptURL) {
+        fetch(CONFIG.googleAppsScriptURL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'saveExpense',
+                expense: expense
+            })
+        }).then(() => console.log('✅ Expense synced')).catch(err => console.error('❌ Expense sync error:', err));
+    }
 
     if (syncStatus.isConnected) syncAllDataToGoogle();
 }
