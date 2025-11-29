@@ -849,7 +849,18 @@
                     </div>
                     <button class="btn btn-primary" onclick="saveGoogleURL()">Save URL</button>
                     <button class="btn" style="background:#f8f9fa; color:#333; border:1px solid #ddd; width:100%; margin-top:5px;" onclick="testGoogleConnection()">Test Connection</button>
-
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid    
+                    #ddd;">                                                                    
+                    <h3>💾 Offline & Sync</h3>                                               
+                    <button onclick="syncPendingToGoogle()" style="background-color:         
+                     #4CAF50; color: white; padding: 10px 20px; border: none;               
+                     border-radius: 4px; cursor: pointer;">                                  
+                     🔄 Sync Now (Upload Pending Data)                                       
+                     </button>                                                                 
+                     <p style="font-size: 12px; color: #666; margin-top: 10px;">              
+                     All data is saved locally. Click above to sync with Google Sheets.     
+                     </p>                                                                       
+                     </div> 
                     <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
 
                     <div class="card-header" style="margin-top:0;">Print Bill Settings</div>
@@ -961,6 +972,127 @@ async function syncOrderToSheets(order) {
     </script>
     
 <script>
+ // =====================================================                       
+         eodRecords: [],                                                      
+ // =====================================================                       
+ const StorageManager = {                                                    
+   init() {                                                                   
+       localStorage.setItem('posData', JSON.stringify({                       
+                                                                              
+         orders: [],                                                          
+         inventory: {},                                                       
+         expenses: [],                                                        
+ // LOCAL STORAGE + SYNC SYSTEM (OFFLINE SUPPORT)                            
+         inventoryVarianceSnapshots: [],                                      
+         lastSyncTime: null,                                                  
+         pendingSync: {                                                       
+           orders: [],                                                        
+           expenses: [],                                                      
+           eodRecords: [],                                                    
+     if (!localStorage.getItem('posData')) {                                  
+           inventoryVarianceSnapshots: []                                     
+         }                                                                    
+       }));                                                                   
+     }                                                                        
+   },                                                                         
+                                                                              
+   getData() {                                                                
+     const data = localStorage.getItem('posData');                            
+     return data ? JSON.parse(data) : null;                                   
+   },                                                                         
+                                                                              
+   saveData(data) {                                                           
+     localStorage.setItem('posData', JSON.stringify(data));                   
+   },                                                                         
+                                                                              
+   addToPending(type, item) {                                                 
+     const data = this.getData();                                             
+     if (data.pendingSync[type]) {                                            
+       data.pendingSync[type].push(item);                                     
+       this.saveData(data);                                                   
+       console.log('📝 Added to pending queue:', type, item);                
+     }                                                                        
+   },                                                                         
+                                                                              
+   markSynced(type, index) {                                                  
+     const data = this.getData();                                             
+     if (data.pendingSync[type]) {                                            
+       data.pendingSync[type].splice(index, 1);                               
+       this.saveData(data);                                                   
+       console.log('✅ Marked as synced:', type);                            
+     }                                                                        
+   },                                                                         
+                                                                              
+   getPending(type) {                                                         
+     const data = this.getData();                                             
+     return data.pendingSync[type] || [];                                     
+   },                                                                         
+                                                                              
+   clearPending(type) {                                                       
+     const data = this.getData();                                             
+     data.pendingSync[type] = [];                                             
+     data.lastSyncTime = new Date().toISOString();                            
+     this.saveData(data);                                                     
+     console.log('🧹 Cleared pending:', type);                              
+   }                                                                          
+ };                                                                           
+                                                                              
+ StorageManager.init();
+ // =====================================================                       
+ // SYNC PENDING DATA TO GOOGLE SHEETS                                        
+ // =====================================================                       
+                                                                              
+ async function syncPendingToGoogle() {                                       
+   console.log('🔄 Starting sync...');                                       
+                                                                              
+   if (!CONFIG.googleAppsScriptURL) {                                         
+     console.error('❌ Google Apps Script URL not configured');              
+     return;                                                                  
+   }                                                                          
+                                                                              
+   const data = StorageManager.getData();                                     
+   let syncedCount = 0;                                                       
+                                                                              
+   try {                                                                      
+     const pendingSnapshots = data.pendingSync                                
+       .inventoryVarianceSnapshots || [];                                    
+     for (let i = 0; i < pendingSnapshots.length; i++) {                     
+       const snapshot = pendingSnapshots[i];                                  
+                                                                              
+       try {                                                                  
+         const response = await fetch(                                        
+           CONFIG.googleAppsScriptURL, {                                      
+           method: 'POST',                                                    
+           mode: 'no-cors',                                                   
+           headers: { 'Content-Type': 'application/json' },                   
+           body: JSON.stringify({                                             
+             action: 'saveInventoryVarianceSnapshot',                         
+             snapshotData: snapshot                                           
+           })                                                                 
+         });                                                                  
+                                                                              
+         StorageManager.markSynced('inventoryVarianceSnapshots', i);         
+         syncedCount++;                                                       
+         console.log('✅ Synced inventory snapshot:', snapshot.date);        
+       } catch (err) {                                                        
+         console.error('❌ Failed to sync snapshot:', err);                  
+       }                                                                      
+     }                                                                        
+                                                                              
+     if (syncedCount > 0) {                                                   
+       console.log('✅ Sync complete: ' + syncedCount + ' items synced');    
+     }                                                                        
+   } catch (error) {                                                          
+     console.error('❌ Sync error:', error);                                 
+   }                                                                          
+ }                                                                            
+                                                                              
+ window.addEventListener('load', () => {                                     
+   setTimeout(syncPendingToGoogle, 2000);                                    
+ });                                                                          
+                                                                              
+ setInterval(syncPendingToGoogle, 5 * 60 * 1000);                            
+ window.addEventListener('focus', syncPendingToGoogle);                      
 // ===================================
 // COB CORN POS - UPDATED SYSTEM V2
 // With all new changes from feedback
@@ -968,16 +1100,16 @@ async function syncOrderToSheets(order) {
 
 // Configuration
 const CONFIG = {
-    googleAppsScriptURL: null,
+    googleAppsScriptURL: "https://script.google.com/macros/s/AKfycbyrTYdTsnKBIqGbbZKC0o3pMMriPN28z7v-GomLyW9XXRnuu-q8Ev2kSXLBK1SPzvW1/exec",
     autoSyncEnabled: true,
     billFormat: {
         businessName: 'COB CORN',
         address1: 'Kharadi',
         address2: 'Pune-411014',
         phone: '+91-9876543210',
-        email: ''
+        email: 'info.cobcorn@gmail.com'
     },
-    masterPassword: '1234',
+    masterPassword: '5836',
     isAuthenticated: false
 };
 
@@ -2049,6 +2181,62 @@ function finalizeEOD() {
     }
 
     if (syncStatus.isConnected) syncAllDataToGoogle();
+         // ====== NEW: Build inventory variance snapshot ======                  
+                                                                              
+     let varianceItems = [];                                                  
+                                                                              
+     Object.keys(inventory).forEach(key => {                                 
+       const item = inventory[key];                                           
+       const actualClosingInput = document.getElementById(                    
+         'eodActual' + key);                                                  
+       const actualClosing = actualClosingInput ?                             
+         parseFloat(actualClosingInput.value) || 0 : 0;                       
+       const expected = (item.openingStock || 0) + (item.purchases           
+         || 0) - (item.consumedToday || 0) - (item.abnormalLoss || 0);       
+       const variance = actualClosing - expected;                             
+                                                                              
+       varianceItems.push({                                                   
+         name: item.name,                                                     
+         opening: item.openingStock || 0,                                     
+         purchased: item.purchases || 0,                                      
+         used: item.consumedToday || 0,                                       
+         expectedClosing: expected,                                           
+         actualClosing: actualClosing,                                        
+         variance: variance,                                                  
+         unit: item.unit || 'pieces'                                          
+       });                                                                    
+     });                                                                      
+                                                                              
+     const inventorySnapshot = {                                              
+       date: getTodayDateString(),                                            
+       items: varianceItems                                                   
+     };                                                                       
+                                                                              
+     StorageManager.addToPending('inventoryVarianceSnapshots',               
+       inventorySnapshot);                                                    
+     console.log('📝 Inventory snapshot saved locally:',                     
+       inventorySnapshot);                                                    
+                                                                              
+     if (CONFIG.googleAppsScriptURL) {                                        
+       fetch(CONFIG.googleAppsScriptURL, {                                    
+         method: 'POST',                                                      
+         mode: 'no-cors',                                                     
+         headers: { 'Content-Type': 'application/json' },                     
+         body: JSON.stringify({                                               
+           action: 'saveInventoryVarianceSnapshot',                           
+           snapshotData: inventorySnapshot                                    
+         })                                                                   
+       })                                                                     
+       .then(() => {                                                          
+         console.log('✅ Inventory snapshot sent to Google Sheets');         
+         StorageManager.clearPending('inventoryVarianceSnapshots');          
+       })                                                                     
+       .catch(err => {                                                        
+         console.error('⚠️ Could not sync to Sheets, saved locally:',       
+           err);                                                              
+       });                                                                    
+     }                                                                        
+     // ====== END: Inventory variance snapshot ======                        
 }
 
 // ============================================
