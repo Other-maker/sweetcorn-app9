@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,7 +11,8 @@
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; }
         .header { background: linear-gradient(135deg, #e63946, #f1faee); color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 100; }
         .logo { font-size: 24px; font-weight: bold; }
-        .header-info { display: flex; gap: 20px; font-size: 14px; }
+        .header-info { display: flex; gap: 20px; font-size: 14px; align-items: center; }
+        .sync-status { font-size: 11px; padding: 4px 8px; border-radius: 999px; background:#ffffff22; border:1px solid #ffffff55; }
         .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
         .tabs { display: flex; background: white; border-bottom: 2px solid #ddd; gap: 0; margin-bottom: 20px; border-radius: 8px 8px 0 0; overflow-x: auto; }
         .tab-btn { padding: 12px 20px; background: white; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 14px; font-weight: 500; color: #666; white-space: nowrap; transition: all 0.3s; }
@@ -77,6 +80,7 @@
             <div>Today: <span id="todayDate"></span></div>
             <div id="currentTime"></div>
             <div>💵 Cash: ₹<span id="todayCash">0</span></div>
+            <div id="syncStatus" class="sync-status">Sync: Checking…</div>
         </div>
     </div>
 
@@ -482,7 +486,7 @@
     <script>
 // CONFIGURATION
 const CONFIG = {
-    googleAppsScriptURL: "https://script.google.com/macros/s/AKfycbyrTYdTsnKBIqGbbZKC0o3pMMriPN28z7v-GomLyW9XXRnuu-q8Ev2kSXLBK1SPzvW1/exec",
+    googleAppsScriptURL: "",
     autoSyncEnabled: true,
     billFormat: {
         businessName: 'COB CORN',
@@ -502,13 +506,12 @@ const StorageManager = {
                 orders: [],
                 inventory: {},
                 expenses: [],
-                inventoryVarianceSnapshots: [],
                 lastSyncTime: null,
                 pendingSync: {
                     orders: [],
                     expenses: [],
                     eodRecords: [],
-                    inventoryVarianceSnapshots: []
+                    reconciliation: []
                 }
             }));
         }
@@ -528,7 +531,7 @@ const StorageManager = {
         if (data.pendingSync[type]) {
             data.pendingSync[type].push(item);
             this.saveData(data);
-            console.log('📝 Added to pending queue:', type);
+            console.log('📝 Added to pending queue:', type, item);
         }
     },
 
@@ -539,23 +542,37 @@ const StorageManager = {
             this.saveData(data);
             console.log('✅ Marked as synced:', type);
         }
-    },
-
-    clearPending(type) {
-        const data = this.getData();
-        data.pendingSync[type] = [];
-        data.lastSyncTime = new Date().toISOString();
-        this.saveData(data);
-        console.log('🧹 Cleared pending:', type);
     }
 };
 
 StorageManager.init();
 
-// SYNC FUNCTION
+// SYNC STATUS UI
+function updateSyncStatus() {
+    const el = document.getElementById('syncStatus');
+    if (!el) return;
+    if (!navigator.onLine) {
+        el.textContent = 'Sync: Offline (Queued)';
+        el.style.background = '#ffebee';
+        el.style.color = '#c62828';
+    } else {
+        el.textContent = 'Sync: Online';
+        el.style.background = '#e8f5e9';
+        el.style.color = '#2e7d32';
+    }
+}
+
+window.addEventListener('online', () => {
+    updateSyncStatus();
+    showMessage('Back online – syncing pending data…', 'info');
+    syncPendingToGoogle();
+});
+window.addEventListener('offline', updateSyncStatus);
+
+// SYNC FUNCTION (Orders + Inventory Reconciliation)
 async function syncPendingToGoogle() {
-    console.log('🔄 Starting sync...');
-    
+    console.log('🔄 Starting sync of pending data...');
+
     if (!CONFIG.googleAppsScriptURL) {
         console.error('❌ Google Apps Script URL not configured');
         showMessage('❌ Google URL not configured', 'error');
@@ -563,36 +580,60 @@ async function syncPendingToGoogle() {
     }
 
     const data = StorageManager.getData();
-    let syncedCount = 0;
+    let orderSynced = 0;
+    let reconSynced = 0;
 
     try {
-        const pendingSnapshots = data.pendingSync.inventoryVarianceSnapshots || [];
-        for (let i = 0; i < pendingSnapshots.length; i++) {
-            const snapshot = pendingSnapshots[i];
+        // 1. Pending ORDERS -> Orders sheet
+        const pendingOrders = data.pendingSync.orders || [];
+        for (let i = 0; i < pendingOrders.length; i++) {
+            const order = pendingOrders[i];
             try {
                 await fetch(CONFIG.googleAppsScriptURL, {
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        action: 'saveInventoryVarianceSnapshot',
-                        snapshotData: snapshot
+                        action: 'saveOrder',
+                        order: order
                     })
                 });
-
-                StorageManager.markSynced('inventoryVarianceSnapshots', 0);
-                syncedCount++;
-                console.log('✅ Synced inventory snapshot:', snapshot.date);
+                StorageManager.markSynced('orders', 0);
+                orderSynced++;
+                console.log('✅ Synced order:', order.orderNumber);
             } catch (err) {
-                console.error('❌ Failed to sync snapshot:', err);
+                console.error('❌ Failed to sync order:', order.orderNumber, err);
+                break;
             }
         }
 
-        if (syncedCount > 0) {
-            console.log('✅ Sync complete: ' + syncedCount + ' items synced');
-            showMessage('✅ Sync complete: ' + syncedCount + ' items', 'success');
+        // 2. Pending INVENTORY RECONCILIATION -> Inventory Reconciliation sheet
+        const pendingRecon = data.pendingSync.reconciliation || [];
+        for (let i = 0; i < pendingRecon.length; i++) {
+            const row = pendingRecon[i];
+            try {
+                await fetch(CONFIG.googleAppsScriptURL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'saveReconciliation',
+                        reconData: row
+                    })
+                });
+                StorageManager.markSynced('reconciliation', 0);
+                reconSynced++;
+                console.log('✅ Synced reconciliation row for:', row.item);
+            } catch (err) {
+                console.error('❌ Failed to sync reconciliation row:', err);
+                break;
+            }
+        }
+
+        if (orderSynced + reconSynced > 0) {
+            showMessage(`✅ Synced ${orderSynced} orders & ${reconSynced} reconciliation rows`, 'success');
         } else {
-            showMessage('✅ Already synced - no pending data', 'info');
+            showMessage('✅ Already synced – no pending data', 'info');
         }
     } catch (error) {
         console.error('❌ Sync error:', error);
@@ -600,14 +641,13 @@ async function syncPendingToGoogle() {
     }
 }
 
-// AUTO-SYNC
+// AUTO-SYNC INITIAL
 window.addEventListener('load', () => {
+    updateSyncStatus();
     setTimeout(syncPendingToGoogle, 2000);
 });
 
-setInterval(syncPendingToGoogle, 0.5 * 60 * 1000);
-
-// DATA STORAGE
+// DATA STORAGE (Local Orders etc.)
 let orders = JSON.parse(localStorage.getItem('cobCornOrders')) || [];
 let menuItems = JSON.parse(localStorage.getItem('cobCornMenuItems')) || [
     { id: 'item1', name: 'Classic Corn', price: 69, category: 'sweet-corn', inventoryId: 'sweet-corn', consumptionPerUnit: 150 },
@@ -669,7 +709,9 @@ function getTodayDateString() {
 
 function updateTodayCash() {
     const today = getTodayDateString();
-    const cash = orders.filter(o => o.status === 'fulfilled' && o.paymentMethod === 'cash' && o.date === today).reduce((sum, o) => sum + o.total, 0);
+    const cash = orders
+        .filter(o => o.status === 'fulfilled' && o.paymentMethod === 'cash' && o.date === today)
+        .reduce((sum, o) => sum + o.total, 0);
     document.getElementById('todayCash').textContent = cash.toFixed(2);
 }
 
@@ -770,11 +812,11 @@ function testGoogleConnection() {
     fetch(CONFIG.googleAppsScriptURL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test', timestamp: new Date().toISOString() }),
+        body: JSON.stringify({ action: 'setup', timestamp: new Date().toISOString() }),
         mode: 'no-cors'
     })
-    .then(() => showMessage('✓ Connected', 'success'))
-    .catch(() => showMessage('Test sent', 'warning'));
+    .then(() => showMessage('✓ Connected (request sent)', 'success'))
+    .catch(() => showMessage('Test sent (check Apps Script logs)', 'warning'));
 }
 
 function checkSyncConnection() {
@@ -1241,6 +1283,37 @@ function togglePaymentReceivedAndSave() {
     }
 }
 
+// REAL-TIME ORDER SYNC TO GOOGLE SHEETS
+async function sendOrderToGoogle(order) {
+    if (!CONFIG.googleAppsScriptURL) {
+        console.warn('No Google URL configured – queuing order');
+        StorageManager.addToPending('orders', order);
+        return;
+    }
+
+    if (!navigator.onLine) {
+        console.warn('Offline – queuing order for later sync');
+        StorageManager.addToPending('orders', order);
+        return;
+    }
+
+    try {
+        await fetch(CONFIG.googleAppsScriptURL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'saveOrder',
+                order: order
+            })
+        });
+        console.log('✅ Order sent to Google Sheets:', order.orderNumber);
+    } catch (err) {
+        console.error('❌ Order sync failed – queued for retry:', err);
+        StorageManager.addToPending('orders', order);
+    }
+}
+
 function saveOrder() {
     if (currentOrder.items.length === 0) {
         alert('Add items first');
@@ -1262,11 +1335,15 @@ function saveOrder() {
         status: 'pending',
         customerName: customerName,
         specialNotes: specialNotes,
-        date: getTodayDateString()
+        date: getTodayDateString(),
+        time: new Date().toLocaleTimeString('en-IN')
     };
 
     orders.push(order);
     localStorage.setItem('cobCornOrders', JSON.stringify(orders));
+
+    // Real-time sync to Orders sheet (with offline queue)
+    sendOrderToGoogle(order);
 
     showMessage('✓ Order saved: ' + orderNumber, 'success');
 
@@ -1344,16 +1421,6 @@ function markFulfilledInline(orderNumber) {
         console.log('🚀 Order fulfilled:', order.orderNumber);
 
         showMessage('✓ Order fulfilled - Inventory updated', 'success');
-
-        const inventorySnapshot = {
-            date: getTodayDateString(),
-            items: order.items.map(item => ({
-                name: item.name,
-                quantity: item.quantity
-            }))
-        };
-
-        StorageManager.addToPending('inventoryVarianceSnapshots', inventorySnapshot);
     }
 }
 
@@ -1441,6 +1508,8 @@ function calculateEODInventoryVariance() {
             }
         }
     });
+
+    showMessage('✓ Inventory variance calculated (will be saved on Finalize)', 'info');
 }
 
 function calculateEODCupsVariance() {
@@ -1464,66 +1533,41 @@ function finalizeEOD() {
 
     const eodData = {
         date: today,
-        systemTotal: parseFloat(document.getElementById('eodSystemTotal').textContent),
-        cashSales: parseFloat(document.getElementById('eodCashSales').textContent),
-        onlineSales: parseFloat(document.getElementById('eodOnlineSales').textContent),
+        expectedCash: parseFloat(document.getElementById('eodCashSales').textContent) || 0,
         actualCash: parseFloat(document.getElementById('eodActualCash').value) || 0,
-        cashVariance: parseFloat(document.getElementById('eodCashVariance').textContent) || 0,
-        inventory: {},
-        cupsSystem: parseInt(document.getElementById('eodCupsSystem').textContent) || 0,
-        cupsPhysical: parseInt(document.getElementById('eodCupsPhysical').value) || 0,
-        cupsVariance: parseInt(document.getElementById('eodCupsVariance').textContent) || 0,
-        platesSystem: parseInt(document.getElementById('eodPlatesSystem').textContent) || 0,
-        platesPhysical: parseInt(document.getElementById('eodPlatesPhysical').value) || 0,
-        platesVariance: parseInt(document.getElementById('eodPlatesVariance').textContent) || 0
+        variance: parseFloat(document.getElementById('eodCashVariance').textContent) || 0,
+        totalSales: parseFloat(document.getElementById('eodSystemTotal').textContent) || 0,
+        ordersCount: orders.filter(o => o.date === today && o.status === 'fulfilled').length,
+        notes: ''
     };
 
+    // Build reconciliation rows for each inventory item
     Object.keys(inventory).forEach(key => {
-        const actual = parseFloat(document.getElementById('eodActual_' + key).value) || 0;
-        const expected = inventory[key].openingStock + inventory[key].purchases - inventory[key].consumedToday;
-        eodData.inventory[key] = {
-            opening: inventory[key].openingStock,
-            purchases: inventory[key].purchases,
-            consumed: inventory[key].consumedToday,
-            expected: expected,
-            actual: actual,
-            variance: actual - expected
+        const item = inventory[key];
+        const actualClosing = parseFloat(document.getElementById('eodActual_' + key)?.value) || 0;
+        const expected = (item.openingStock || 0) + (item.purchases || 0) - (item.consumedToday || 0);
+        const variance = actualClosing - expected;
+
+        const reconRow = {
+            date: today,
+            item: item.name,
+            expectedStock: expected,
+            actualStock: actualClosing,
+            variance: variance,
+            reason: ''
         };
+
+        // Queue reconciliation rows to Inventory Reconciliation sheet
+        StorageManager.addToPending('reconciliation', reconRow);
     });
 
     eodReconciliation.push(eodData);
     localStorage.setItem('cobCornEOD', JSON.stringify(eodReconciliation));
 
-    let varianceItems = [];
-    Object.keys(inventory).forEach(key => {
-        const item = inventory[key];
-        const actualClosing = parseFloat(document.getElementById('eodActual_' + key).value) || 0;
-        const expected = (item.openingStock || 0) + (item.purchases || 0) - (item.consumedToday || 0);
-        const variance = actualClosing - expected;
-
-        varianceItems.push({
-            name: item.name,
-            opening: item.openingStock || 0,
-            purchased: item.purchases || 0,
-            used: item.consumedToday || 0,
-            expectedClosing: expected,
-            actualClosing: actualClosing,
-            variance: variance,
-            unit: item.unit || 'pieces'
-        });
-    });
-
-    const inventorySnapshot = {
-        date: getTodayDateString(),
-        items: varianceItems
-    };
-
-    StorageManager.addToPending('inventoryVarianceSnapshots', inventorySnapshot);
-    console.log('📝 Inventory snapshot saved locally:', inventorySnapshot);
-
-    showMessage('✓ EOD Finalized & Saved', 'success');
+    showMessage('✓ EOD Finalized & Queued for Sheets', 'success');
 
     if (CONFIG.googleAppsScriptURL) {
+        // Save high-level EOD summary to EOD sheet
         fetch(CONFIG.googleAppsScriptURL, {
             method: 'POST',
             mode: 'no-cors',
@@ -1532,33 +1576,18 @@ function finalizeEOD() {
                 action: 'saveEOD',
                 eodData: eodData
             })
-        }).then(() => console.log('✅ EOD synced')).catch(err => console.error('❌ EOD sync error:', err));
+        }).then(() => console.log('✅ EOD summary sent'))
+          .catch(err => console.error('❌ EOD sync error:', err));
     }
+
+    // Also push reconciliation rows now
+    syncPendingToGoogle();
 }
 
 // REPORTS
 function updateReports() {
     const period = document.getElementById('reportPeriod')?.value || 'daily';
     const today = new Date();
-    let startDate, endDate;
-
-    switch(period) {
-        case 'daily':
-            startDate = endDate = getTodayDateString();
-            break;
-        case 'weekly':
-            const weekStart = new Date(today);
-            weekStart.setDate(today.getDate() - today.getDay());
-            startDate = weekStart.toLocaleDateString('en-IN');
-            endDate = getTodayDateString();
-            break;
-        case 'monthly':
-            startDate = new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-IN');
-            endDate = getTodayDateString();
-            break;
-        default:
-            startDate = endDate = getTodayDateString();
-    }
 
     const periodOrders = orders.filter(order => order.status === 'fulfilled');
 
@@ -1593,6 +1622,9 @@ function updateReports() {
             const avgPrice = data.revenue / data.qty;
             tbody.innerHTML += `<tr><td style="padding:8px;">${name}</td><td style="padding:8px;">${data.qty}</td><td style="padding:8px;">₹${data.revenue.toFixed(2)}</td><td style="padding:8px;">₹${avgPrice.toFixed(2)}</td></tr>`;
         });
+        if (Object.keys(itemSales).length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#999;">No sales data</td></tr>';
+        }
     }
 }
 
@@ -1843,7 +1875,7 @@ function showMessage(text, type) {
     setTimeout(() => div.remove(), 2500);
 }
 
-console.log('✅ Cob Corn POS - FULLY WORKING');
-</script>
+console.log('✅ Cob Corn POS - FULLY WORKING (Orders → Orders sheet, Reconciliation → Inventory Reconciliation)');
+    </script>
 </body>
 </html>
