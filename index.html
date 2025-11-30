@@ -1448,19 +1448,11 @@ async function markFulfilledInline(orderNumber) {
         localStorage.setItem('cobCornOrders', JSON.stringify(orders));
         
         // ✅ NOW sync to Google Sheets (on fulfill, not on payment)
-        if (isOnline && CONFIG.googleAppsScriptURL) {
-            const syncStatus = await syncOrderToGoogle(order);
-            if (syncStatus) {
-                order.synced = true;
-                localStorage.setItem('cobCornOrders', JSON.stringify(orders));
-                showMessage('✓ Order fulfilled & synced to Google Sheets ✅', 'success');
-            } else {
-                showMessage('✓ Order fulfilled (will sync when connection available) 📝', 'warning');
-            }
-        } else {
-            showMessage('✓ Order fulfilled (offline - will sync when online) 📝', 'warning');
+        const syncStatus = await syncOrderToGoogle(order);
+        if (syncStatus) {
+            order.synced = true;
+            localStorage.setItem('cobCornOrders', JSON.stringify(orders));
         }
-        
         loadPendingOrdersInline();
         updateTodayCash();
         loadPendingOrdersInline();  // Refresh pending orders list
