@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -639,8 +637,9 @@ async function syncPendingToGoogle() {
         console.error('❌ Sync error:', error);
         showMessage('❌ Sync error: ' + error.message, 'error');
     }
-}
-    
+
+} // <-- close syncPendingToGoogle
+
     // ✅ STANDALONE GLOBAL FUNCTION - Syncs single order to Google Sheets
 async function syncOrderToGoogle(order) {
     if (!CONFIG.googleAppsScriptURL || !isOnline) {
