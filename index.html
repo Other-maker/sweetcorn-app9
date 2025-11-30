@@ -1276,11 +1276,44 @@ function togglePaymentReceivedAndSave() {
     if (currentOrder.paymentReceived) {
         btn.classList.add('active');
         btn.innerHTML = '✓ Payment Received';
-        saveOrder();
+        savePendingOrderLocally();  // ✅ Save locally only, don't sync yet
+        showMessage('✓ Payment recorded - Order waiting to be fulfilled', 'info');
     } else {
         btn.classList.remove('active');
         btn.innerHTML = '⏱ Payment Received';
     }
+}
+function savePendingOrderLocally() {
+    if (currentOrder.items.length === 0) {
+        alert('Add items first');
+        return;
+    }
+
+    const orderNumber = 'ORD' + Date.now();
+    const paymentMethod = document.querySelector('input[name="payment"]:checked').value;
+    const customerName = document.getElementById('customerName').value || 'Walk-in';
+    const specialNotes = document.getElementById('specialNotes').value;
+
+    const order = {
+        orderNumber: orderNumber,
+        timestamp: new Date().toISOString(),
+        items: [...currentOrder.items],
+        total: currentOrder.total,
+        paymentMethod: paymentMethod,
+        paymentReceived: currentOrder.paymentReceived,
+        status: 'pending',  // ✅ Status is PENDING, not fulfilled
+        customerName: customerName,
+        specialNotes: specialNotes,
+        date: getTodayDateString(),
+        synced: false  // ✅ NOT synced to Google yet
+    };
+
+    orders.push(order);
+    localStorage.setItem('cobCornOrders', JSON.stringify(orders));
+    
+    showMessage(`✓ Order ${orderNumber} saved - waiting to be fulfilled`, 'success');
+    resetForm();
+    loadPendingOrdersInline();
 }
 
 // REAL-TIME ORDER SYNC TO GOOGLE SHEETS
@@ -1407,14 +1440,19 @@ function loadPendingOrdersInline() {
     });
 }
 
-function markFulfilledInline(orderNumber) {
+async function markFulfilled(orderNumber) {
     const order = orders.find(o => o.orderNumber === orderNumber);
     if (order) {
         order.status = 'fulfilled';
-
         deductInventory(order);
-
         localStorage.setItem('cobCornOrders', JSON.stringify(orders));
+        
+        // ✅ NOW sync to Google Sheets (on fulfill, not on payment)
+        const syncStatus = await syncOrderToGoogle(order);
+        if (syncStatus) {
+            order.synced = true;
+            localStorage.setItem('cobCornOrders', JSON.stringify(orders));
+        }
         loadPendingOrdersInline();
         updateTodayCash();
 
