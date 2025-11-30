@@ -590,10 +590,10 @@ async function syncPendingToGoogle() {
             const order = pendingOrders[i];
             try {
                 // use CORS (requires the Apps Script endpoint to send Access-Control-Allow-Origin)
+                // avoid custom headers to prevent OPTIONS preflight — send plain text JSON body
                 const resOrder = await fetch(CONFIG.googleAppsScriptURL, {
                     method: 'POST',
                     mode: 'cors',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'saveOrder', order: order })
                 });
 
@@ -615,22 +615,39 @@ async function syncPendingToGoogle() {
         for (let i = 0; i < pendingRecon.length; i++) {
             const row = pendingRecon[i];
             try {
-                const resRecon = await fetch(CONFIG.googleAppsScriptURL, {
-                    method: 'POST',
-                    mode: 'cors',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'saveReconciliation', reconData: row })
-                });
+                // If this is a full snapshot (bulk), send it as one request using the snapshot endpoint
+                if (row && row.items && Array.isArray(row.items)) {
+                    const resSnap = await fetch(CONFIG.googleAppsScriptURL, {
+                        method: 'POST',
+                        mode: 'cors',
+                        body: JSON.stringify({ action: 'saveInventoryVarianceSnapshot', snapshotData: row })
+                    });
 
-                if (!resRecon.ok) {
-                    console.error('❌ Failed to sync reconciliation - server returned', resRecon.status);
-                    break;
+                    if (!resSnap.ok) {
+                        console.error('❌ Failed to sync inventory snapshot - server returned', resSnap.status);
+                        break;
+                    }
+                    StorageManager.markSynced('reconciliation', 0);
+                    reconSynced++;
+                    console.log('✅ Synced inventory snapshot for date:', row.date || '(no-date)');
+                } else {
+                    // legacy single-row reconciliation -> keep calling saveReconciliation
+                    const resRecon = await fetch(CONFIG.googleAppsScriptURL, {
+                        method: 'POST',
+                        mode: 'cors',
+                        body: JSON.stringify({ action: 'saveReconciliation', reconData: row })
+                    });
+
+                    if (!resRecon.ok) {
+                        console.error('❌ Failed to sync reconciliation - server returned', resRecon.status);
+                        break;
+                    }
+                    StorageManager.markSynced('reconciliation', 0);
+                    reconSynced++;
+                    console.log('✅ Synced reconciliation row for:', row.itemName || row.item || '(unknown)');
                 }
-                StorageManager.markSynced('reconciliation', 0);
-                reconSynced++;
-                console.log('✅ Synced reconciliation row for:', row.itemName || row.item || '(unknown)');
             } catch (err) {
-                console.error('❌ Failed to sync reconciliation row:', err);
+                console.error('❌ Failed to sync reconciliation row/snapshot:', err);
                 break;
             }
         }
@@ -658,10 +675,10 @@ async function syncOrderToGoogle(order) {
     try {
         console.log('🚀 Syncing order to Google Sheets:', order.orderNumber);
         
+        // send as plain JSON body without custom header to avoid OPTIONS preflight
         const res = await fetch(CONFIG.googleAppsScriptURL, {
             method: 'POST',
             mode: 'cors',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'saveOrder', order: order, timestamp: new Date().toISOString() })
         });
 
@@ -846,9 +863,9 @@ function testGoogleConnection() {
         return;
     }
 
+    // test connection: send JSON payload without custom header (avoid preflight)
     fetch(CONFIG.googleAppsScriptURL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'setup', timestamp: new Date().toISOString() }),
         mode: 'cors'
     })
@@ -1375,7 +1392,6 @@ async function sendOrderToGoogle(order) {
             const response = await fetch(CONFIG.googleAppsScriptURL, {
                 method: 'POST',
                 mode: 'cors',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'saveOrder', order: order })
             });
 
@@ -1620,30 +1636,53 @@ function finalizeEOD() {
         notes: ''
     };
 
-    // Build reconciliation rows for each inventory item
+    // Build a single reconciliation snapshot (bulk) for all inventory items
+    const snapshot = { date: today, items: [] };
+
     Object.keys(inventory).forEach(key => {
         const item = inventory[key];
         const actualClosing = parseFloat(document.getElementById('eodActual_' + key)?.value) || 0;
         const expected = (item.openingStock || 0) + (item.purchases || 0) - (item.consumedToday || 0);
         const variance = actualClosing - expected;
 
-        const reconRow = {
-            date: today,
-            itemName: item.name,
+        snapshot.items.push({
+            name: item.name,
             opening: item.openingStock || 0,
             purchased: item.purchases || 0,
             used: item.consumedToday || 0,
             expectedClosing: expected,
             actualClosing: actualClosing,
             variance: variance,
-            unit: item.unit || '',
-            timestamp: new Date().toISOString(),
-            reason: ''
-        };
-
-        // Queue reconciliation rows to Inventory Reconciliation sheet
-        StorageManager.addToPending('reconciliation', reconRow);
+            unit: item.unit || ''
+        });
     });
+
+    // Try to send the full snapshot in a single request. If offline or server fails, queue it.
+    if (CONFIG.googleAppsScriptURL && navigator.onLine) {
+        try {
+            const resp = await fetch(CONFIG.googleAppsScriptURL, {
+                method: 'POST',
+                mode: 'cors',
+                body: JSON.stringify({ action: 'saveInventoryVarianceSnapshot', snapshotData: snapshot })
+            });
+
+            if (resp.ok) {
+                showMessage('✓ Inventory snapshot saved to Sheets', 'success');
+            } else {
+                console.error('❌ Snapshot save returned status', resp.status);
+                StorageManager.addToPending('reconciliation', snapshot);
+                showMessage('Saved locally (snapshot queued) — will retry on next sync', 'warning');
+            }
+        } catch (err) {
+            console.error('❌ Snapshot POST failed, queuing:', err);
+            StorageManager.addToPending('reconciliation', snapshot);
+            showMessage('Saved locally (snapshot queued) — will retry on next sync', 'warning');
+        }
+    } else {
+        // offline or no URL => queue snapshot
+        StorageManager.addToPending('reconciliation', snapshot);
+        showMessage('✓ Inventory snapshot queued for offline sync', 'info');
+    }
 
     eodReconciliation.push(eodData);
     localStorage.setItem('cobCornEOD', JSON.stringify(eodReconciliation));
@@ -1652,10 +1691,10 @@ function finalizeEOD() {
 
     if (CONFIG.googleAppsScriptURL) {
         // Save high-level EOD summary to EOD sheet
+        // send EOD summary without custom header to avoid preflight
         fetch(CONFIG.googleAppsScriptURL, {
             method: 'POST',
             mode: 'cors',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'saveEOD', eodData: eodData })
         }).then(res => {
             if (res.ok) console.log('✅ EOD summary sent');
