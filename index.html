@@ -1347,7 +1347,7 @@ async function sendOrderToGoogle(order) {
     }
 }
 
-function saveOrder() {
+/*function saveOrder() {
     if (currentOrder.items.length === 0) {
         alert('Add items first');
         return;
@@ -1383,7 +1383,7 @@ function saveOrder() {
     resetForm();
     loadPendingOrdersInline();
 }
-
+*/
 function resetForm() {
     currentOrder = {
         items: [], total: 0, payment: 'cash', paymentReceived: false,
@@ -1448,17 +1448,22 @@ async function markFulfilled(orderNumber) {
         localStorage.setItem('cobCornOrders', JSON.stringify(orders));
         
         // ✅ NOW sync to Google Sheets (on fulfill, not on payment)
-        const syncStatus = await syncOrderToGoogle(order);
-        if (syncStatus) {
-            order.synced = true;
-            localStorage.setItem('cobCornOrders', JSON.stringify(orders));
+        if (isOnline && CONFIG.googleAppsScriptURL) {
+            const syncStatus = await syncOrderToGoogle(order);
+            if (syncStatus) {
+                order.synced = true;
+                localStorage.setItem('cobCornOrders', JSON.stringify(orders));
+                showMessage('✓ Order fulfilled & synced to Google Sheets ✅', 'success');
+            } else {
+                showMessage('✓ Order fulfilled (will sync when connection available) 📝', 'warning');
+            }
+        } else {
+            showMessage('✓ Order fulfilled (offline - will sync when online) 📝', 'warning');
         }
+        
         loadPendingOrdersInline();
         updateTodayCash();
-
-        console.log('🚀 Order fulfilled:', order.orderNumber);
-
-        showMessage('✓ Order fulfilled - Inventory updated', 'success');
+        loadPendingOrdersInline();  // Refresh pending orders list
     }
 }
 
