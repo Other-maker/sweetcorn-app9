@@ -589,15 +589,18 @@ async function syncPendingToGoogle() {
         for (let i = 0; i < pendingOrders.length; i++) {
             const order = pendingOrders[i];
             try {
-                await fetch(CONFIG.googleAppsScriptURL, {
+                // use CORS (requires the Apps Script endpoint to send Access-Control-Allow-Origin)
+                const resOrder = await fetch(CONFIG.googleAppsScriptURL, {
                     method: 'POST',
-                    mode: 'no-cors',
+                    mode: 'cors',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'saveOrder',
-                        order: order
-                    })
+                    body: JSON.stringify({ action: 'saveOrder', order: order })
                 });
+
+                if (!resOrder.ok) {
+                    console.error('❌ Failed to sync order - server returned', resOrder.status);
+                    break;
+                }
                 StorageManager.markSynced('orders', 0);
                 orderSynced++;
                 console.log('✅ Synced order:', order.orderNumber);
@@ -612,18 +615,20 @@ async function syncPendingToGoogle() {
         for (let i = 0; i < pendingRecon.length; i++) {
             const row = pendingRecon[i];
             try {
-                await fetch(CONFIG.googleAppsScriptURL, {
+                const resRecon = await fetch(CONFIG.googleAppsScriptURL, {
                     method: 'POST',
-                    mode: 'no-cors',
+                    mode: 'cors',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'saveReconciliation',
-                        reconData: row
-                    })
+                    body: JSON.stringify({ action: 'saveReconciliation', reconData: row })
                 });
+
+                if (!resRecon.ok) {
+                    console.error('❌ Failed to sync reconciliation - server returned', resRecon.status);
+                    break;
+                }
                 StorageManager.markSynced('reconciliation', 0);
                 reconSynced++;
-                console.log('✅ Synced reconciliation row for:', row.item);
+                console.log('✅ Synced reconciliation row for:', row.itemName || row.item || '(unknown)');
             } catch (err) {
                 console.error('❌ Failed to sync reconciliation row:', err);
                 break;
@@ -653,16 +658,17 @@ async function syncOrderToGoogle(order) {
     try {
         console.log('🚀 Syncing order to Google Sheets:', order.orderNumber);
         
-        await fetch(CONFIG.googleAppsScriptURL, {
+        const res = await fetch(CONFIG.googleAppsScriptURL, {
             method: 'POST',
-            mode: 'no-cors',
+            mode: 'cors',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'saveOrder',
-                order: order,
-                timestamp: new Date().toISOString()
-            })
+            body: JSON.stringify({ action: 'saveOrder', order: order, timestamp: new Date().toISOString() })
         });
+
+        if (!res.ok) {
+            console.error('❌ Order sync failed (status):', res.status);
+            return false;
+        }
 
         console.log('✅ Order synced to Google Sheets:', order.orderNumber);
         return true;
@@ -844,10 +850,13 @@ function testGoogleConnection() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'setup', timestamp: new Date().toISOString() }),
-        mode: 'no-cors'
+        mode: 'cors'
     })
-    .then(() => showMessage('✓ Connected (request sent)', 'success'))
-    .catch(() => showMessage('Test sent (check Apps Script logs)', 'warning'));
+    .then(res => {
+        if (res.ok) showMessage('✓ Connected (request received)', 'success');
+        else showMessage('Test sent — server responded with status ' + res.status, 'warning');
+    })
+    .catch(() => showMessage('Test sent (check Apps Script logs) — CORS or network error', 'warning'));
 }
 
 function checkSyncConnection() {
@@ -1362,16 +1371,20 @@ async function sendOrderToGoogle(order) {
     }
 
     try {
-        await fetch(CONFIG.googleAppsScriptURL, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'saveOrder',
-                order: order
-            })
-        });
-        console.log('✅ Order sent to Google Sheets:', order.orderNumber);
+        try {
+            const response = await fetch(CONFIG.googleAppsScriptURL, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'saveOrder', order: order })
+            });
+
+            if (!response.ok) throw new Error('Server responded with ' + response.status);
+            console.log('✅ Order sent to Google Sheets:', order.orderNumber);
+        } catch (err) {
+            console.error('❌ Order sync failed – queued for retry:', err);
+            StorageManager.addToPending('orders', order);
+        }
     } catch (err) {
         console.error('❌ Order sync failed – queued for retry:', err);
         StorageManager.addToPending('orders', order);
@@ -1616,10 +1629,15 @@ function finalizeEOD() {
 
         const reconRow = {
             date: today,
-            item: item.name,
-            expectedStock: expected,
-            actualStock: actualClosing,
+            itemName: item.name,
+            opening: item.openingStock || 0,
+            purchased: item.purchases || 0,
+            used: item.consumedToday || 0,
+            expectedClosing: expected,
+            actualClosing: actualClosing,
             variance: variance,
+            unit: item.unit || '',
+            timestamp: new Date().toISOString(),
             reason: ''
         };
 
@@ -1636,14 +1654,13 @@ function finalizeEOD() {
         // Save high-level EOD summary to EOD sheet
         fetch(CONFIG.googleAppsScriptURL, {
             method: 'POST',
-            mode: 'no-cors',
+            mode: 'cors',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'saveEOD',
-                eodData: eodData
-            })
-        }).then(() => console.log('✅ EOD summary sent'))
-          .catch(err => console.error('❌ EOD sync error:', err));
+            body: JSON.stringify({ action: 'saveEOD', eodData: eodData })
+        }).then(res => {
+            if (res.ok) console.log('✅ EOD summary sent');
+            else console.error('❌ EOD sync error: server returned', res.status);
+        }).catch(err => console.error('❌ EOD sync error:', err));
     }
 
     // Also push reconciliation rows now
