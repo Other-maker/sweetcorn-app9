@@ -139,7 +139,7 @@
                         <input type="number" id="amount" readonly value="0" step="0.01">
                     </div>
                     <label>Payment Status</label>
-                    <button class="payment-received-btn" id="paymentReceivedBtn" onclick="togglePaymentReceivedAndSave()">⏱ Payment Pending</button>
+                    <button class="payment-received-btn" id="paymentReceivedBtn" onclick="togglePaymentReceivedAndSave()">⏱ Payment Received</button>
                     <button class="btn btn-success" onclick="printBill()" style="background:#06a77d; width:100%; margin-bottom:5px;">🖨️ Print Bill</button>
                     <button class="btn" style="background:#f8f9fa; color:#333; border:1px solid #ddd; width:100%;" onclick="resetForm()">🔄 Clear Form</button>
                     <div style="margin-top: 20px;">
@@ -1279,7 +1279,7 @@ function togglePaymentReceivedAndSave() {
         saveOrder();
     } else {
         btn.classList.remove('active');
-        btn.innerHTML = '⏱ Payment Pending';
+        btn.innerHTML = '⏱ Payment Received';
     }
 }
 
@@ -1366,7 +1366,7 @@ function resetForm() {
     const paymentBtn = document.getElementById('paymentReceivedBtn');
     if (paymentBtn) {
         paymentBtn.classList.remove('active');
-        paymentBtn.innerHTML = '⏱ Payment Pending';
+        paymentBtn.innerHTML = '⏱ Payment Received';
     }
 
     updateOrderDisplay();
