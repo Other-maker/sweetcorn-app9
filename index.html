@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -642,7 +644,8 @@ async function syncPendingToGoogle() {
 
     // ✅ STANDALONE GLOBAL FUNCTION - Syncs single order to Google Sheets
 async function syncOrderToGoogle(order) {
-    if (!CONFIG.googleAppsScriptURL || !isOnline) {
+    // 'isOnline' was not defined — use navigator.onLine which is the standard browser API
+    if (!CONFIG.googleAppsScriptURL || !navigator.onLine) {
         console.log('📝 Order saved locally (offline or no URL)', order.orderNumber);
         return false;
     }
