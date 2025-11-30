@@ -639,7 +639,8 @@ async function syncPendingToGoogle() {
         console.error('❌ Sync error:', error);
         showMessage('❌ Sync error: ' + error.message, 'error');
     }
-    // REAL-TIME SYNC FUNCTION FOR SINGLE ORDER
+    
+    // ✅ STANDALONE GLOBAL FUNCTION - Syncs single order to Google Sheets
 async function syncOrderToGoogle(order) {
     if (!CONFIG.googleAppsScriptURL || !isOnline) {
         console.log('📝 Order saved locally (offline or no URL)', order.orderNumber);
@@ -668,6 +669,35 @@ async function syncOrderToGoogle(order) {
     }
 }
 
+    // REAL-TIME SYNC FUNCTION FOR SINGLE ORDER
+/*async function syncOrderToGoogle(order) {
+    if (!CONFIG.googleAppsScriptURL || !isOnline) {
+        console.log('📝 Order saved locally (offline or no URL)', order.orderNumber);
+        return false;
+    }
+
+    try {
+        console.log('🚀 Syncing order to Google Sheets:', order.orderNumber);
+        
+        await fetch(CONFIG.googleAppsScriptURL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'saveOrder',
+                order: order,
+                timestamp: new Date().toISOString()
+            })
+        });
+
+        console.log('✅ Order synced to Google Sheets:', order.orderNumber);
+        return true;
+    } catch (error) {
+        console.error('❌ Failed to sync order:', error);
+        return false;
+    }
+}
+*/
 // AUTO-SYNC INITIAL
 window.addEventListener('load', () => {
     updateSyncStatus();
