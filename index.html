@@ -1623,7 +1623,7 @@ function calculateEODPlatesVariance() {
     document.getElementById('eodPlatesVariance').style.color = variance === 0 ? '#06a77d' : '#e63946';
 }
 
-function finalizeEOD() {
+async function finalizeEOD() {
     const today = getTodayDateString();
 
     const eodData = {
