@@ -175,6 +175,10 @@
 
         <!-- INVENTORY TAB -->
         <div id="inventory" class="tab-content">
+            <div id="inventorySummary" class="card" style="margin-bottom:15px; display:none;">
+                <div class="card-header">Inventory Summary (Today)</div>
+                <div id="inventorySummaryList" style="display:flex; flex-wrap:wrap; gap:8px; padding-top:8px; font-size:13px; color:#333;"></div>
+            </div>
             <div class="card">
                 <div class="card-header">📊 Inventory Management</div>
                 <p style="margin-bottom: 15px; color: #666; font-size: 13px;"><strong>Auto-deduction:</strong> Inventory reduces when orders FULFILLED.</p>
@@ -890,6 +894,9 @@ function loadMenuItems() {
 function loadQuickItems() {
     const container = document.getElementById('quickItems');
     if (!container) return;
+    // Update the compact inventory summary above the cards
+    updateInventorySummary();
+
     container.innerHTML = '';
     menuItems.forEach(item => {
         const btn = document.createElement('div');
@@ -1183,6 +1190,25 @@ function loadInventoryDisplay() {
         `;
         container.appendChild(card);
     });
+    // refresh summary after populating cards
+    updateInventorySummary();
+}
+
+// Render a compact inventory summary with current closing quantities
+function updateInventorySummary() {
+    const summaryEl = document.getElementById('inventorySummary');
+    const listEl = document.getElementById('inventorySummaryList');
+    if (!summaryEl || !listEl) return;
+
+    listEl.innerHTML = '';
+    Object.entries(inventory).forEach(([key, item]) => {
+        const closingStock = item.totalStock + item.purchases - item.consumedToday - item.abnormalLoss;
+        const chip = document.createElement('div');
+        chip.style.cssText = 'background:#f1f1f1; padding:8px 10px; border-radius:6px; border:1px solid #ddd;';
+        chip.innerHTML = `<strong style="display:block;">${item.name}</strong><small style="color:#555;">${closingStock} ${item.unit}</small>`;
+        listEl.appendChild(chip);
+    });
+    summaryEl.style.display = 'block';
 }
 
 function addStock(invKey) {
@@ -1192,8 +1218,10 @@ function addStock(invKey) {
         return;
     }
 
+    // Only increase today's purchases — don't increment totalStock here.
+    // totalStock is used as the baseline; closingStock = totalStock + purchases - consumed - loss
+    // Incrementing totalStock here would result in double-counting in closingStock.
     inventory[invKey].purchases += qty;
-    inventory[invKey].totalStock += qty;
     inventory[invKey].lastPurchaseDate = getTodayDateString();
     localStorage.setItem('cobCornInventory', JSON.stringify(inventory));
     document.getElementById('addStock_' + invKey).value = '';
