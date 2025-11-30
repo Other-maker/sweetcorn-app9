@@ -639,6 +639,7 @@ async function syncPendingToGoogle() {
         console.error('❌ Sync error:', error);
         showMessage('❌ Sync error: ' + error.message, 'error');
     }
+}
     
     // ✅ STANDALONE GLOBAL FUNCTION - Syncs single order to Google Sheets
 async function syncOrderToGoogle(order) {
