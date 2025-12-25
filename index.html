@@ -1277,9 +1277,9 @@ function deductInventory(order) {
 
         if (menuItem.inventoryId === 'sweet-corn' && inventory['cups']) {
             inventory['cups'].consumedToday += orderItem.quantity;
+        }
         if (menuItem.inventoryId === 'nachos' && inventory['plates']) {
             inventory['plates'].consumedToday += orderItem.quantity;
-        }
         }
     });
 
